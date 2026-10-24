@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import hanna from "@/assets/hanna.jpg";
 import max from "@/assets/max.jpg";
 import dix from "@/assets/dix.jpg";
@@ -27,7 +27,9 @@ export const Route = createFileRoute("/")({
   component: Index,
 });
 
-const dogs = [
+type Pet = { name: string; img: string; desc: string; note: string };
+
+const baseDogs: Pet[] = [
   { name: "Hanna", img: hanna, desc: "Pastor alemán · café claro, negro y blanco", note: "La reina de la casa, dulce y protectora." },
   { name: "Max", img: max, desc: "Pastor alemán black solid · 5 meses", note: "Pequeño corazón negro, lleno de travesuras." },
   { name: "Dix", img: dix, desc: "Pastor alemán · café claro con negro", note: "Leal guardián de cada paso." },
@@ -38,7 +40,85 @@ const dogs = [
   { name: "Camila", img: camila, desc: "Salchicha · café, pelo corto", note: "Siesta, amor y cobijitas." },
 ];
 
+const STORAGE_KEY = "altar-mascotas-extra";
+
+function loadExtraPets(): Pet[] {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    return raw ? (JSON.parse(raw) as Pet[]) : [];
+  } catch {
+    return [];
+  }
+}
+
 const papelColors = ["bg-altar-pink", "bg-altar-orange", "bg-altar-gold", "bg-altar-green", "bg-altar-purple"];
+
+// Melodía estilo "La Llorona" (tonos tradicionales) sintetizada con WebAudio
+const MELODY: Array<[number, number]> = [
+  [440, 1], [523.25, 0.5], [493.88, 0.5], [440, 1], [392, 1],
+  [440, 1], [523.25, 0.5], [587.33, 0.5], [659.25, 1.5], [587.33, 0.5],
+  [523.25, 1], [493.88, 1], [440, 2],
+  [392, 1], [440, 0.5], [493.88, 0.5], [523.25, 1], [440, 1],
+  [392, 1], [329.63, 1], [440, 2.5],
+];
+
+function useAltarMusic() {
+  const ctxRef = useRef<AudioContext | null>(null);
+  const timerRef = useRef<number | null>(null);
+  const [playing, setPlaying] = useState(false);
+
+  const stop = () => {
+    if (timerRef.current) window.clearTimeout(timerRef.current);
+    timerRef.current = null;
+    ctxRef.current?.close();
+    ctxRef.current = null;
+    setPlaying(false);
+  };
+
+  const play = () => {
+    const ctx = new AudioContext();
+    ctxRef.current = ctx;
+    const master = ctx.createGain();
+    master.gain.value = 0.18;
+    master.connect(ctx.destination);
+
+    const loop = () => {
+      let t = ctx.currentTime + 0.05;
+      for (const [freq, beats] of MELODY) {
+        const dur = beats * 0.55;
+        const osc = ctx.createOscillator();
+        const g = ctx.createGain();
+        osc.type = "sine";
+        osc.frequency.value = freq;
+        g.gain.setValueAtTime(0, t);
+        g.gain.linearRampToValueAtTime(0.9, t + 0.05);
+        g.gain.exponentialRampToValueAtTime(0.001, t + dur);
+        osc.connect(g).connect(master);
+        osc.start(t);
+        osc.stop(t + dur);
+        // acompañamiento grave
+        const bass = ctx.createOscillator();
+        const bg = ctx.createGain();
+        bass.type = "triangle";
+        bass.frequency.value = freq / 2;
+        bg.gain.setValueAtTime(0, t);
+        bg.gain.linearRampToValueAtTime(0.25, t + 0.08);
+        bg.gain.exponentialRampToValueAtTime(0.001, t + dur);
+        bass.connect(bg).connect(master);
+        bass.start(t);
+        bass.stop(t + dur);
+        t += dur;
+      }
+      timerRef.current = window.setTimeout(loop, (t - ctx.currentTime) * 1000);
+    };
+    loop();
+    setPlaying(true);
+  };
+
+  useEffect(() => stop, []);
+
+  return { playing, toggle: () => (playing ? stop() : play()) };
+}
 
 function Petals() {
   const petals = useMemo(
@@ -131,7 +211,7 @@ function MarigoldArch() {
   );
 }
 
-function DogCard({ dog, i }: { dog: (typeof dogs)[number]; i: number }) {
+function DogCard({ dog, i }: { dog: Pet; i: number }) {
   return (
     <article className="animate-reveal group relative pt-14" style={{ animationDelay: `${i * 0.15}s` }}>
       <div className="relative mx-auto transition-transform duration-500 group-hover:scale-110 group-hover:-rotate-1">
@@ -149,14 +229,75 @@ function DogCard({ dog, i }: { dog: (typeof dogs)[number]; i: number }) {
           <div className="absolute inset-0 bg-gradient-to-t from-altar-night/90 via-transparent to-transparent" />
           <div className="absolute inset-x-0 bottom-0 p-4 text-center">
             <h3 className="font-display text-3xl font-black text-altar-gold transition-transform group-hover:scale-110">{dog.name}</h3>
-            <p className="text-xs text-altar-cream/80">{dog.desc}</p>
           </div>
         </div>
-        <p className="mt-3 text-center font-display italic text-altar-cream/90 opacity-0 transition-opacity duration-500 group-hover:opacity-100">
-          “{dog.note}”
-        </p>
+        <div className="mt-3 flex justify-center">
+          <Candle delay={(i % 5) * 0.25} />
+        </div>
       </div>
     </article>
+  );
+}
+
+function AddPetForm({ onAdd }: { onAdd: (pet: Pet) => void }) {
+  const [openForm, setOpenForm] = useState(false);
+  const [name, setName] = useState("");
+  const [desc, setDesc] = useState("");
+  const [note, setNote] = useState("");
+  const [img, setImg] = useState<string | null>(null);
+
+  const handleFile = (file: File | undefined) => {
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => setImg(reader.result as string);
+    reader.readAsDataURL(file);
+  };
+
+  const submit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!name.trim() || !img) return;
+    onAdd({ name: name.trim(), img, desc: desc.trim(), note: note.trim() });
+    setName(""); setDesc(""); setNote(""); setImg(null);
+    setOpenForm(false);
+  };
+
+  if (!openForm) {
+    return (
+      <button
+        onClick={() => setOpenForm(true)}
+        className="animate-reveal group relative flex min-h-64 flex-col items-center justify-center gap-3 rounded-t-full border-4 border-dashed border-altar-gold/60 pt-14 text-altar-gold transition-all duration-300 hover:scale-105 hover:border-altar-gold"
+      >
+        <span className="text-5xl transition-transform group-hover:scale-125">🐾</span>
+        <span className="font-display text-xl font-bold">Añadir mascota</span>
+      </button>
+    );
+  }
+
+  return (
+    <form onSubmit={submit} className="animate-reveal relative flex flex-col gap-3 rounded-2xl border-4 border-altar-gold bg-altar-deep/80 p-5 text-left">
+      <h3 className="font-display text-2xl font-black text-altar-gold">Nueva mascota</h3>
+      <label className="text-sm text-altar-cream/80">
+        Nombre *
+        <input required value={name} onChange={(e) => setName(e.target.value)} className="mt-1 w-full rounded bg-altar-night/60 px-3 py-2 text-altar-cream outline-none focus:ring-2 focus:ring-altar-gold" />
+      </label>
+      <label className="text-sm text-altar-cream/80">
+        Raza y colores
+        <input value={desc} onChange={(e) => setDesc(e.target.value)} placeholder="Ej. Pastor alemán · café con negro" className="mt-1 w-full rounded bg-altar-night/60 px-3 py-2 text-altar-cream outline-none focus:ring-2 focus:ring-altar-gold" />
+      </label>
+      <label className="text-sm text-altar-cream/80">
+        Frase para recordarla
+        <input value={note} onChange={(e) => setNote(e.target.value)} className="mt-1 w-full rounded bg-altar-night/60 px-3 py-2 text-altar-cream outline-none focus:ring-2 focus:ring-altar-gold" />
+      </label>
+      <label className="text-sm text-altar-cream/80">
+        Foto *
+        <input required type="file" accept="image/*" onChange={(e) => handleFile(e.target.files?.[0])} className="mt-1 w-full text-xs text-altar-cream/70 file:mr-3 file:rounded file:border-0 file:bg-altar-orange file:px-3 file:py-2 file:text-altar-night" />
+      </label>
+      {img && <img src={img} alt="Vista previa" className="h-24 w-24 rounded-t-full object-cover" />}
+      <div className="flex gap-2">
+        <button type="submit" className="rounded bg-altar-orange px-4 py-2 font-bold text-altar-night transition-transform hover:scale-105">Encender su veladora</button>
+        <button type="button" onClick={() => setOpenForm(false)} className="rounded border border-altar-cream/40 px-4 py-2 text-altar-cream/80">Cancelar</button>
+      </div>
+    </form>
   );
 }
 
@@ -185,11 +326,37 @@ function NoseIntro({ onEnter }: { onEnter: () => void }) {
 
 function Index() {
   const [open, setOpen] = useState(false);
+  const [extraPets, setExtraPets] = useState<Pet[]>([]);
+  const music = useAltarMusic();
+
+  useEffect(() => {
+    setExtraPets(loadExtraPets());
+  }, []);
+
+  const addPet = (pet: Pet) => {
+    const next = [...extraPets, pet];
+    setExtraPets(next);
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+    } catch {
+      // foto muy grande para guardar; se muestra solo en esta visita
+    }
+  };
+
   if (!open) return <NoseIntro onEnter={() => setOpen(true)} />;
+
+  const allPets = [...baseDogs, ...extraPets];
 
   return (
     <main className="bg-altar relative min-h-screen overflow-hidden text-altar-cream">
       <Petals />
+      <button
+        onClick={music.toggle}
+        aria-label={music.playing ? "Apagar música" : "Encender música"}
+        className="fixed bottom-5 right-5 z-40 flex h-14 w-14 items-center justify-center rounded-full border-2 border-altar-gold bg-altar-deep/90 text-2xl shadow-xl transition-transform hover:scale-110"
+      >
+        {music.playing ? "🔥" : "🎵"}
+      </button>
       <header className="relative">
         <PapelPicado />
         <div className="animate-reveal px-6 pb-8 pt-12 text-center">
@@ -207,7 +374,8 @@ function Index() {
       </header>
 
       <section className="mx-auto grid max-w-6xl gap-x-10 gap-y-20 px-8 py-16 sm:grid-cols-2 lg:grid-cols-4">
-        {dogs.map((d, i) => <DogCard key={d.name} dog={d} i={i} />)}
+        {allPets.map((d, i) => <DogCard key={`${d.name}-${i}`} dog={d} i={i} />)}
+        <AddPetForm onAdd={addPet} />
       </section>
 
       <footer className="relative pb-16 text-center">

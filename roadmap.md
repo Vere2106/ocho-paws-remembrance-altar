@@ -1,4 +1,9 @@
 # Roadmap
 
-- [x] Retocar retrato de Chester: rizo mucho más abierto, pelo ondulado y más largo, sin recortar
-- [x] Retocar retrato de Toto: verse más gordito / más redondo
+- [x] Chester: pelo lacio con movimiento
+- [x] Toto: menos gordito
+- [x] Música de Día de Muertos con botón
+- [x] Formulario para añadir mascotas
+- [x] Veladora propia por mascota
+- [x] Solo nombre visible en cada tarjeta
+- [ ] Chester: pelo más corto, tipo schnauzer mezclado con maltés y shih tzu
